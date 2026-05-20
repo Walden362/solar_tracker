@@ -43,8 +43,7 @@ const int OR = 33;
 const int UL = 34;
 const int UR = 35;
 
-// NEU: Endschalter Pin (Beispiel Pin 15, bitte anpassen)
-const int ENDSCHALTER_PIN = 15; 
+const int ENDSCHALTER_PIN = 15; // Bitte anpassen
 
 // =====================================================
 // ADC
@@ -53,7 +52,7 @@ const float referenzSpannung = 5.0;
 const int adcMax = 4095;
 
 // =====================================================
-// BESTE POSITIONEN
+// BESTE POSITIONEN (Global gespeichert)
 // =====================================================
 int bestStepH = 0;
 int bestSumH  = 0;
@@ -61,7 +60,6 @@ int bestSumH  = 0;
 int bestStepV = 0;
 int bestSumV  = 0;
 
-// Globale Variablen für loop()
 float finalPositionH = 0;
 float finalPositionV = 0;
 
@@ -92,25 +90,23 @@ void makeStepVertical()
   delayMicroseconds(500);
 }
 
-// NEU: Funktion um zum Endschalter zu fahren (Referenzfahrt)
+// =====================================================
+// REFERENZFAHRT (HOMING)
+// =====================================================
 void fahreBisEndschalter()
 {
-  Serial.println("Fahre zum Endschalter...");
+  Serial.println("Fahre horizontal zum Endschalter (Nullpunkt)...");
   
   // Richtung festlegen (HIGH oder LOW, je nachdem wo der Schalter sitzt)
   digitalWrite(DIR_H, LOW); 
 
-  // Da der Schalter ein Öffner ist (NC) und INPUT_PULLUP verwendet wird:
-  // Schalter NICHT gedrückt = LOW (Strom fließt nach GND)
-  // Schalter gedrückt = HIGH (Kontakt offen, Pullup zieht hoch)
   while(digitalRead(ENDSCHALTER_PIN) == LOW)
   {
     makeStepHorizontal();
-    delay(2); // Kurze Pause, damit der Motor nicht zu schnell dreht
+    delay(2);
   }
   
-  Serial.println("Endschalter erreicht! Position genullt.");
-  // Hier könntest du interne Positions-Counter auf 0 setzen, falls du welche nutzt.
+  Serial.println("Endschalter erreicht! Horizontale Position genullt.");
 }
 
 // =====================================================
@@ -181,13 +177,11 @@ void sendToThingSpeak(float angleH, float angleV)
   http.end();
 }
 
+// =====================================================
+// SCAN FUNKTION
+// =====================================================
 std::pair<float, float> findBestPosition()
 {
-  // =====================================================
-  // ZUR AUSGANGSPOSITION UND KALIBRIERUNG IN BEZUG AUF NORDEN
-  // =====================================================
-  
-  // Fehlerbehebung: event wurde zuvor nicht deklariert und initialisiert
   sensors_event_t event; 
   mag.getEvent(&event);
 
@@ -207,7 +201,6 @@ std::pair<float, float> findBestPosition()
   bestSumH = 0;
 
   digitalWrite(DIR_H, HIGH);
-
   Serial.println("\nHORIZONTAL SCAN");
 
   for(int i = 0; i < steps_horizontal; i++)
@@ -235,11 +228,7 @@ std::pair<float, float> findBestPosition()
     }
   }
 
-  // =====================================================
-  // ZUR BESTEN HORIZONTALEN POSITION
-  // =====================================================
   int stepsBackH = steps_horizontal - bestStepH;
-
   digitalWrite(DIR_H, LOW);
 
   for(int i = 0; i < stepsBackH; i++)
@@ -260,7 +249,6 @@ std::pair<float, float> findBestPosition()
   bestSumV = 0;
 
   digitalWrite(DIR_V, LOW);
-
   Serial.println("\nVERTICAL SCAN");
 
   for(int i = 0; i < steps_vertical; i++)
@@ -287,11 +275,7 @@ std::pair<float, float> findBestPosition()
     }
   }
 
-  // =====================================================
-  // ZUR BESTEN VERTIKALEN POSITION
-  // =====================================================
   int stepsBackV = steps_vertical - bestStepV;
-
   digitalWrite(DIR_V, HIGH);
 
   for(int i = 0; i < stepsBackV; i++)
@@ -305,60 +289,14 @@ std::pair<float, float> findBestPosition()
   return {bestAngleHorizontalToNorth, bestAngleV};
 }
 
-void nachstellenPosition(float startPositionH, float startPositionV)
-{
-  int horizontalNachstellen = 1;
-  int vertikalNachstellen = 1;
-
-  while(horizontalNachstellen == 1 || vertikalNachstellen == 1)
-  {
-    int valOL = readSensor(OL);
-    int valOR = readSensor(OR);
-    int valUL = readSensor(UL);
-    int valUR = readSensor(UR);
-
-    int diffHorizontal = (valOL + valUL) - (valOR + valUR);
-    int diffVertical = (valOL + valOR) - (valUL + valUR);
-
-    if(diffHorizontal > 50  && horizontalNachstellen == 1)
-    {
-      digitalWrite(DIR_H, HIGH);
-      makeStepHorizontal();
-    }
-    else if(diffHorizontal < -50 && horizontalNachstellen == 1)
-    {
-      digitalWrite(DIR_H, LOW);
-      makeStepHorizontal();
-    }else{
-      horizontalNachstellen = 0;
-    }
-
-    if(diffVertical > 50 && vertikalNachstellen == 1)
-    {
-      digitalWrite(DIR_V, HIGH);
-      makeStepVertical();
-    }
-    else if(diffVertical < -50 && vertikalNachstellen == 1)
-    {
-      digitalWrite(DIR_V, LOW);
-      makeStepVertical();
-    }else{
-      vertikalNachstellen = 0;
-    }
-  }
-}
-
 void setup()
 {
   Serial.begin(115200);
 
   pinMode(STEP_H, OUTPUT);
   pinMode(DIR_H, OUTPUT);
-
   pinMode(STEP_V, OUTPUT);
   pinMode(DIR_V, OUTPUT);
-
-  // NEU: Endschalter als Input mit internem Pull-up Widerstand definieren
   pinMode(ENDSCHALTER_PIN, INPUT_PULLUP);
 
   analogReadResolution(12);
@@ -372,47 +310,54 @@ void setup()
     while(1);
   }
   
-  // NEU: Homing-Fahrt ausführen bevor der Tracker startet
-  fahreBisEndschalter();
-  delay(1000); // Kurz warten nach dem Nullpunkt anfahren
-
-  Serial.println("\nSTART SOLAR TRACKER");
-  Serial.println("WLAN bleibt während des Scans aus.");
-  
-  std::pair<float, float> startPosition = findBestPosition();
-  finalPositionH = startPosition.first;
-  finalPositionV = startPosition.second;
+  Serial.println("\nSTART SOLAR TRACKER - Periodischer Modus aktiviert");
 }
 
 
 void loop()
 {
-  // =====================================================
-  // ERGEBNIS
-  // =====================================================
+  // 1. WLAN ausschalten um den ADC nicht durch Funkrauschen zu stören
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+
+  Serial.println("\n================================");
+  Serial.println("BEREITE NEUEN SCAN VOR...");
+
+  // 2. Vertikale Achse zurück auf 0 fahren (da kein Endschalter vorhanden)
+  // HIGH ist in deiner Funktion die Richtung zurück zur Startposition
+  if(bestStepV > 0)
+  {
+    Serial.println("Fahre vertikale Achse zurück auf Startposition...");
+    digitalWrite(DIR_V, HIGH); 
+    for(int i = 0; i < bestStepV; i++)
+    {
+      makeStepVertical();
+      delay(5);
+    }
+    bestStepV = 0; // Vertikal ist wieder auf 0
+  }
+
+  // 3. Horizontale Achse zurück auf 0 fahren (mit Endschalter)
+  fahreBisEndschalter();
+  delay(1000);
+
+  // 4. SCAN DURCHFÜHREN
+  std::pair<float, float> currentPosition = findBestPosition();
+  finalPositionH = currentPosition.first;
+  finalPositionV = currentPosition.second;
+
   Serial.println("\n================================");
   Serial.println("BESTE POSITION GEFUNDEN");
-
-  // Fehlerbehebung: currentPositionH existierte nicht, nutzt jetzt finalPositionH
-  Serial.print("Horizontaler Winkel: ");
-  Serial.println(finalPositionH);
-
-  Serial.print("Vertikaler Winkel: ");
-  Serial.println(finalPositionV);
-
+  Serial.print("Horizontaler Winkel (zu Nord): "); Serial.println(finalPositionH);
+  Serial.print("Vertikaler Winkel: "); Serial.println(finalPositionV);
   Serial.println("================================");
 
-  // =====================================================
-  // WLAN ERST NACH DEM SCAN EINSCHALTEN
-  // =====================================================
+  // 5. WLAN einschalten und Upload
   connectWiFi();
-
-  // =====================================================
-  // THINGSPEAK SENDEN
-  // =====================================================
   sendToThingSpeak(finalPositionH, finalPositionV);
 
-  Serial.println("Fertig.");
-
-  while(1);
+  // 6. Pause von 5 Minuten (300.000 Millisekunden)
+  Serial.println("\nFertig. Warte 5 Minuten bis zum nächsten Durchlauf...");
+  delay(300000); 
 }
