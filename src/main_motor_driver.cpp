@@ -11,7 +11,6 @@
 // =====================================================
 Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
 
-
 // =====================================================
 // WLAN / ThingSpeak
 // =====================================================
@@ -37,12 +36,15 @@ const int STEP_V = 14;
 const int steps_vertical = 200;
 
 // =====================================================
-// SENSOR PINS
+// SENSOR & ENDSCHALTER PINS
 // =====================================================
 const int OL = 32;
 const int OR = 33;
 const int UL = 34;
 const int UR = 35;
+
+// NEU: Endschalter Pin (Beispiel Pin 15, bitte anpassen)
+const int ENDSCHALTER_PIN = 15; 
 
 // =====================================================
 // ADC
@@ -58,6 +60,10 @@ int bestSumH  = 0;
 
 int bestStepV = 0;
 int bestSumV  = 0;
+
+// Globale Variablen für loop()
+float finalPositionH = 0;
+float finalPositionV = 0;
 
 // =====================================================
 // BESTE SENSORWERTE
@@ -86,19 +92,37 @@ void makeStepVertical()
   delayMicroseconds(500);
 }
 
+// NEU: Funktion um zum Endschalter zu fahren (Referenzfahrt)
+void fahreBisEndschalter()
+{
+  Serial.println("Fahre zum Endschalter...");
+  
+  // Richtung festlegen (HIGH oder LOW, je nachdem wo der Schalter sitzt)
+  digitalWrite(DIR_H, LOW); 
+
+  // Da der Schalter ein Öffner ist (NC) und INPUT_PULLUP verwendet wird:
+  // Schalter NICHT gedrückt = LOW (Strom fließt nach GND)
+  // Schalter gedrückt = HIGH (Kontakt offen, Pullup zieht hoch)
+  while(digitalRead(ENDSCHALTER_PIN) == LOW)
+  {
+    makeStepHorizontal();
+    delay(2); // Kurze Pause, damit der Motor nicht zu schnell dreht
+  }
+  
+  Serial.println("Endschalter erreicht! Position genullt.");
+  // Hier könntest du interne Positions-Counter auf 0 setzen, falls du welche nutzt.
+}
+
 // =====================================================
 // SENSOR MITTELN
 // =====================================================
 int readSensor(int pin)
 {
   long sum = 0;
-
   for(int i = 0; i < 10; i++)
   {
     sum += analogRead(pin);
-    
   }
-
   return sum / 10;
 }
 
@@ -148,44 +172,33 @@ void sendToThingSpeak(float angleH, float angleV)
   int code = http.GET();
 
   Serial.println("\nThingSpeak Upload:");
-  Serial.print("Horizontaler Winkel: ");
-  Serial.println(angleH);
-
-  Serial.print("Vertikaler Winkel: ");
-  Serial.println(angleV);
-
-  Serial.print("Beste horizontale Summe: ");
-  Serial.println(bestSumH);
-
-  Serial.print("Beste vertikale Summe: ");
-  Serial.println(bestSumV);
-
-  Serial.print("HTTP Code: ");
-  Serial.println(code);
+  Serial.print("Horizontaler Winkel: ");  Serial.println(angleH);
+  Serial.print("Vertikaler Winkel: ");    Serial.println(angleV);
+  Serial.print("Beste horiz. Summe: ");   Serial.println(bestSumH);
+  Serial.print("Beste vert. Summe: ");    Serial.println(bestSumV);
+  Serial.print("HTTP Code: ");            Serial.println(code);
 
   http.end();
 }
 
 std::pair<float, float> findBestPosition()
 {
-    // =====================================================
+  // =====================================================
   // ZUR AUSGANGSPOSITION UND KALIBRIERUNG IN BEZUG AUF NORDEN
   // =====================================================
+  
+  // Fehlerbehebung: event wurde zuvor nicht deklariert und initialisiert
+  sensors_event_t event; 
+  mag.getEvent(&event);
+
   float heading = atan2(event.magnetic.y, event.magnetic.x);
   float declinationAngle = 3.00;
   heading += declinationAngle;
 
-  // Korrigieren für negative Werte
-  if(heading < 0)
-    heading += 2*PI;
+  if(heading < 0) heading += 2*PI;
+  if(heading > 2*PI) heading -= 2*PI;
 
-  // Korrigieren für Werte über 360 Grad
-  if(heading > 2*PI)
-    heading -= 2*PI;
-
-  // In Grad umrechnen
   float headingDegrees = heading * 180/M_PI;  
-
 
   // =====================================================
   // HORIZONTALER SCAN
@@ -211,25 +224,10 @@ std::pair<float, float> findBestPosition()
     float angleH = i * 0.45;
     float angleHorizontalToNorth = headingDegrees + angleH;
 
-    Serial.print(angleH);
-    Serial.print(" ");
-    Serial.print(0);
-    Serial.print(" ");
-    Serial.print(valOL);
-    Serial.print(" ");
-    Serial.print(valOR);
-    Serial.print(" ");
-    Serial.print(valUL);
-    Serial.print(" ");
-    Serial.print(valUR);
-    Serial.print(" ");
-    Serial.println(sum);
-
     if(sum > bestSumH)
     {
       bestSumH = sum;
       bestStepH = i;
-
       bestOL = valOL;
       bestOR = valOR;
       bestUL = valUL;
@@ -253,7 +251,6 @@ std::pair<float, float> findBestPosition()
   float bestAngleH = bestStepH * 0.45;
   float bestAngleHorizontalToNorth = headingDegrees + bestAngleH;
 
-  // Pause zwischen horizontalem und vertikalem Scan
   delay(1000);
 
   // =====================================================
@@ -279,12 +276,10 @@ std::pair<float, float> findBestPosition()
     int sum = valOL + valOR + valUL + valUR;
     float angleV = i * 0.45;
 
-
     if(sum > bestSumV)
     {
       bestSumV = sum;
       bestStepV = i;
-
       bestOL = valOL;
       bestOR = valOR;
       bestUL = valUL;
@@ -325,7 +320,6 @@ void nachstellenPosition(float startPositionH, float startPositionV)
     int diffHorizontal = (valOL + valUL) - (valOR + valUR);
     int diffVertical = (valOL + valOR) - (valUL + valUR);
 
-    // Wenn die Differenz über einem gewissen Schwellwert liegt, wird nachgestellt
     if(diffHorizontal > 50  && horizontalNachstellen == 1)
     {
       digitalWrite(DIR_H, HIGH);
@@ -336,9 +330,8 @@ void nachstellenPosition(float startPositionH, float startPositionV)
       digitalWrite(DIR_H, LOW);
       makeStepHorizontal();
     }else{
-      int horiontalNachstellen = 0;
+      horizontalNachstellen = 0;
     }
-
 
     if(diffVertical > 50 && vertikalNachstellen == 1)
     {
@@ -350,7 +343,7 @@ void nachstellenPosition(float startPositionH, float startPositionV)
       digitalWrite(DIR_V, LOW);
       makeStepVertical();
     }else{
-      int vertikalNachstellen = 0;
+      vertikalNachstellen = 0;
     }
   }
 }
@@ -365,6 +358,9 @@ void setup()
   pinMode(STEP_V, OUTPUT);
   pinMode(DIR_V, OUTPUT);
 
+  // NEU: Endschalter als Input mit internem Pull-up Widerstand definieren
+  pinMode(ENDSCHALTER_PIN, INPUT_PULLUP);
+
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
 
@@ -372,36 +368,37 @@ void setup()
 
   if(!mag.begin())
   {
-    /* There was a problem detecting the HMC5883 ... check your connections */
     Serial.println("Ooops, no HMC5883 detected ... Check your wiring!");
     while(1);
   }
+  
+  // NEU: Homing-Fahrt ausführen bevor der Tracker startet
+  fahreBisEndschalter();
+  delay(1000); // Kurz warten nach dem Nullpunkt anfahren
 
   Serial.println("\nSTART SOLAR TRACKER");
   Serial.println("WLAN bleibt während des Scans aus.");
-  Serial.println("ANGLE_H ANGLE_V OL OR UL UR SUM");
-
+  
   std::pair<float, float> startPosition = findBestPosition();
-  float startPositionH = startPosition.first;
-  float startPositionV = startPosition.second;
+  finalPositionH = startPosition.first;
+  finalPositionV = startPosition.second;
 }
 
 
 void loop()
 {
-
-
   // =====================================================
   // ERGEBNIS
   // =====================================================
   Serial.println("\n================================");
   Serial.println("BESTE POSITION GEFUNDEN");
 
+  // Fehlerbehebung: currentPositionH existierte nicht, nutzt jetzt finalPositionH
   Serial.print("Horizontaler Winkel: ");
-  Serial.println(currentPositionH);
+  Serial.println(finalPositionH);
 
   Serial.print("Vertikaler Winkel: ");
-  Serial.println(currentPositionV);
+  Serial.println(finalPositionV);
 
   Serial.println("================================");
 
@@ -413,7 +410,7 @@ void loop()
   // =====================================================
   // THINGSPEAK SENDEN
   // =====================================================
-  sendToThingSpeak(startPositionH, startPositionV);
+  sendToThingSpeak(finalPositionH, finalPositionV);
 
   Serial.println("Fertig.");
 
