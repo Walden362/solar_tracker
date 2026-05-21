@@ -13,6 +13,12 @@
 #define TIME_TO_SLEEP  300         // Schlafenszeit in Sekunden (5 Minuten = 300)
 
 // =====================================================
+// SOLARPANEL
+// =====================================================
+const int SOLAR_OUT = 12;
+
+
+// =====================================================
 // HMC5883 MAGNETOMETER
 // =====================================================
 Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
@@ -29,7 +35,7 @@ String apiKey = "KP3PLZAHAREB1I9U";
 // =====================================================
 const int DIR_H  = 26;
 const int STEP_H = 25;
-const int EN_H   = 12; // NEU: Enable-Pin für horizontalen Motor (Bitte Pin anpassen!)
+const int EN_H   = 18; // Enable-Pin für horizontalen Motor
 const int steps_horizontal = 800;
 
 // =====================================================
@@ -37,7 +43,7 @@ const int steps_horizontal = 800;
 // =====================================================
 const int DIR_V  = 27;
 const int STEP_V = 14;
-const int EN_V   = 13; // NEU: Enable-Pin für vertikalen Motor (Bitte Pin anpassen!)
+const int EN_V   = 19; // Enable-Pin für vertikalen Motor
 const int steps_vertical = 200;
 
 // =====================================================
@@ -148,6 +154,14 @@ void sendToThingSpeak(float angleH, float angleV) {
 // SCAN FUNKTION
 // =====================================================
 std::pair<float, float> findBestPosition() {
+  
+  // NEU: Motoren stromlos schalten, um magnetische Störungen zu verhindern
+  Serial.println("Schalte Motoren für Kompassmessung stromlos...");
+  digitalWrite(EN_H, HIGH);
+  digitalWrite(EN_V, HIGH);
+  delay(50); // Kurz warten, bis sich Magnetfelder abgebaut haben
+
+  // Jetzt Kompass störungsfrei auslesen
   sensors_event_t event; 
   mag.getEvent(&event);
 
@@ -155,6 +169,11 @@ std::pair<float, float> findBestPosition() {
   if(heading < 0) heading += 2*PI;
   if(heading > 2*PI) heading -= 2*PI;
   float headingDegrees = heading * 180/M_PI;  
+
+  // NEU: Motoren wieder aktivieren, da nun die Bewegung startet
+  digitalWrite(EN_H, LOW);
+  digitalWrite(EN_V, LOW);
+  delay(10); // Treiber kurz stabilisieren lassen
 
   // --- HORIZONTALER SCAN ---
   bestStepH = 0; bestSumH = 0;
@@ -216,15 +235,12 @@ void setup() {
   // Pins initialisieren
   pinMode(STEP_H, OUTPUT); pinMode(DIR_H, OUTPUT);
   pinMode(STEP_V, OUTPUT); pinMode(DIR_V, OUTPUT);
-  
-  // NEU: Enable-Pins als Ausgang definieren
   pinMode(EN_H, OUTPUT);   pinMode(EN_V, OUTPUT);
-  
-  // NEU: Motortreiber direkt aktivieren (LOW = Aktiv)
+  pinMode(ENDSCHALTER_PIN, INPUT);
+
+  // Motortreiber initial aktivieren
   digitalWrite(EN_H, LOW);
   digitalWrite(EN_V, LOW);
-
-  pinMode(ENDSCHALTER_PIN, INPUT_PULLUP);
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
@@ -234,11 +250,8 @@ void setup() {
   // Sensor Check
   if(!mag.begin()) {
     Serial.println("Ooops, no HMC5883 detected ... Check your wiring!");
-    
-    // NEU: Auch im Fehlerfall Treiber vor dem Sleep ausschalten
     digitalWrite(EN_H, HIGH);
     digitalWrite(EN_V, HIGH);
-    
     esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
     esp_deep_sleep_start();
   }
@@ -252,7 +265,7 @@ void setup() {
   fahreBisEndschalter();
   delay(1000);
 
-  // 3. Scan durchführen (Motoren fahren zur besten Position)
+  // 3. Scan durchführen (Motoren schalten sich intern kurz für den Kompass aus)
   std::pair<float, float> currentPosition = findBestPosition();
   finalPositionH = currentPosition.first;
   finalPositionV = currentPosition.second;
@@ -277,7 +290,7 @@ void setup() {
     }
   }
 
-  // NEU: 6. Treiber komplett stromlos schalten (HIGH = Deaktiviert)
+  // 6. Treiber komplett stromlos schalten vor dem Sleep
   Serial.println("Deaktiviere Motortreiber...");
   digitalWrite(EN_H, HIGH);
   digitalWrite(EN_V, HIGH);
