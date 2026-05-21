@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include <Arduino.h>
 #include <utility>
+#include <LittleFS.h>
+
 
 // =====================================================
 // DEEP SLEEP EINSTELLUNGEN
@@ -175,15 +177,112 @@ int readSensor(int pin) {
 // =====================================================
 // WLAN VERBINDEN
 // =====================================================
-void connectWiFi() {
+bool connectWiFiTimeout(int maxWaitSeconds) {
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
-  Serial.print("Verbinde WLAN");
-  while(WiFi.status() != WL_CONNECTED) {
+  Serial.print("\nSuche WLAN (" + String(maxWaitSeconds) + " Sekunden Timeout)");
+  
+  int attempts = 0;
+  while(WiFi.status() != WL_CONNECTED && attempts < (maxWaitSeconds * 2)) {
     delay(500);
     Serial.print(".");
+    attempts++;
   }
-  Serial.println("\nWLAN verbunden!");
+  
+  if(WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWLAN verbunden!");
+    return true;
+  } else {
+    Serial.println("\nKein WLAN gefunden. Bleibe im Offline-Modus.");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return false;
+  }
+}
+
+// =====================================================
+// HYBRID-MODUS: DATEN LOKAL SPEICHERN
+// =====================================================
+void saveDataLocally(float angleH, float angleV) {
+  float voltOL = bestOL * (referenzSpannung / adcMax);
+  float voltOR = bestOR * (referenzSpannung / adcMax);
+  float voltUL = bestUL * (referenzSpannung / adcMax);
+  float voltUR = bestUR * (referenzSpannung / adcMax);
+
+  // Generiere den Teil der URL nach dem API Key
+  String dataString = "field1=" + String(angleH, 2) + "&field2=" + String(angleV, 2) +
+                      "&field3=" + String(bestSumH) + "&field4=" + String(bestSumV) +
+                      "&field5=" + String(voltOL, 3) + "&field6=" + String(voltOR, 3) +
+                      "&field7=" + String(voltUL, 3) + "&field8=" + String(voltUR, 3);
+
+  // Schreibe die Daten in die Datei
+  File file = LittleFS.open("/data.txt", FILE_APPEND);
+  if(!file) {
+    Serial.println("Fehler beim Öffnen der lokalen Speicherdatei!");
+    return;
+  }
+  file.println(dataString);
+  file.close();
+  Serial.println("Daten sicher auf internem Speicher (LittleFS) abgelegt.");
+}
+
+// =====================================================
+// HYBRID-MODUS: DATEN HOCHLADEN
+// =====================================================
+void uploadSavedData() {
+  File file = LittleFS.open("/data.txt", FILE_READ);
+  if(!file || file.size() == 0) {
+    Serial.println("Keine lokalen Daten zum Hochladen gefunden.");
+    if(file) file.close();
+    return;
+  }
+
+  Serial.println("Starte Bulk-Upload der gespeicherten Daten...");
+  
+  // Wir erstellen eine temporäre Datei für alles, was vielleicht fehlschlägt
+  File tempFile = LittleFS.open("/temp.txt", FILE_WRITE);
+  bool uploadError = false;
+  int successCount = 0;
+
+  while(file.available()) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if(line.length() == 0) continue;
+
+    if(!uploadError) {
+      HTTPClient http;
+      String url = "http://api.thingspeak.com/update?api_key=" + apiKey + "&" + line;
+      http.begin(url);
+      int code = http.GET();
+      http.end();
+
+      if(code == 200) {
+        successCount++;
+        Serial.println("Upload #" + String(successCount) + " erfolgreich!");
+        // ThingSpeak Free Account erlaubt nur 1 Request alle 15 Sekunden
+        if(file.available()) {
+          Serial.println("Warte 15 Sekunden wegen ThingSpeak Rate-Limit...");
+          delay(15000); 
+        }
+      } else {
+        Serial.println("Upload gescheitert (Code " + String(code) + "). Behalte restliche Daten für später.");
+        uploadError = true;
+        tempFile.println(line); // Diese Zeile zurückschreiben
+      }
+    } else {
+      // Wenn bereits ein Fehler auftrat, restliche Zeilen ungesendet in Temp-Datei verschieben
+      tempFile.println(line);
+    }
+  }
+
+  file.close();
+  tempFile.close();
+
+  // Alte Datei löschen und durch die bereinigte Temp-Datei ersetzen
+  LittleFS.remove("/data.txt");
+  LittleFS.rename("/temp.txt", "/data.txt");
+
+  Serial.println("Offline-Sync beendet. " + String(successCount) + " Einträge hochgeladen.");
 }
 
 
@@ -520,12 +619,20 @@ void setup() {
 
   readBestrahlung();
 
-  // 4. WLAN einschalten und senden
-  connectWiFi();
-  sendToThingSpeak(finalPositionH, finalPositionV);
-  
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+
+  // 1. Speichere die aktuelle Messung lokal (offline)
+  saveDataLocally(finalPositionH, finalPositionV);
+  // 4. WLAN einschalten und senden falls nach 10 Sekunden verbunden, ansonsten im Offline-Modus bleiben
+  if (connectWiFiTimeout(10)) {
+    // Wenn verbunden, lade alle lokal gespeicherten Daten hoch
+    uploadSavedData();
+    
+    // WLAN sofort wieder abschalten
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  }
+
+
 
   // 5. Vertikalen Motor absenken
   if(bestStepV > 0) {
