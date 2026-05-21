@@ -307,6 +307,7 @@ std::pair<float, float> findBestPosition() {
     int currentUL = readSensor(UL);
     int currentUR = readSensor(UR);
 
+    
 
     int sum = currentOL + currentOR + currentUL + currentUR;
     if(sum > bestSumH) {
@@ -363,6 +364,12 @@ std::pair<float, float> findBestPosition() {
     makeStepVertical();
     delay(5);
   }
+
+  Serial.print("Werte Oben Links: "); Serial.println(analogRead(OL));
+  Serial.print("Werte Oben Rechts: "); Serial.println(analogRead(OR));
+  Serial.print("Werte Unten Links: "); Serial.println(analogRead(UL));
+  Serial.print("Werte Unten Rechts: "); Serial.println(analogRead(UR));
+
 
   float bestAngleV = bestStepV * 0.45;
   Serial.print("Bestes horizontales Winkel zum Norden: "); Serial.println(bestAngleHorizontalToNorth);
