@@ -10,7 +10,7 @@
 // DEEP SLEEP EINSTELLUNGEN
 // =====================================================
 #define uS_TO_S_FACTOR 1000000ULL  // Umrechnungsfaktor Mikrosekunden zu Sekunden
-#define TIME_TO_SLEEP  300         // Schlafenszeit in Sekunden (5 Minuten = 300)
+#define TIME_TO_SLEEP  60         // Schlafenszeit in Sekunden (5 Minuten = 300)
 
 // =====================================================
 // SOLARPANEL
@@ -26,8 +26,8 @@ Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
 // =====================================================
 // WLAN / ThingSpeak
 // =====================================================
-const char* ssid = "iPhone von Noah";
-const char* password = "123456789";
+const char* ssid = "iPhone 16 Pro von Max"; // Bitte anpassen
+const char* password = "walden36";
 String apiKey = "KP3PLZAHAREB1I9U";
 
 // =====================================================
@@ -35,7 +35,7 @@ String apiKey = "KP3PLZAHAREB1I9U";
 // =====================================================
 const int DIR_H  = 26;
 const int STEP_H = 25;
-const int EN_H   = 18; // Enable-Pin für horizontalen Motor
+const int EN_H   = 2; // Enable-Pin für horizontalen Motor
 const int steps_horizontal = 800;
 
 // =====================================================
@@ -43,7 +43,7 @@ const int steps_horizontal = 800;
 // =====================================================
 const int DIR_V  = 27;
 const int STEP_V = 14;
-const int EN_V   = 19; // Enable-Pin für vertikalen Motor
+const int EN_V   = 4; // Enable-Pin für vertikalen Motor
 const int steps_vertical = 200;
 
 // =====================================================
@@ -99,11 +99,72 @@ void fahreBisEndschalter() {
   digitalWrite(DIR_H, LOW); 
   while(digitalRead(ENDSCHALTER_PIN) == LOW) {
     makeStepHorizontal();
-    delay(2);
+    delay(5); // Etwas schneller fahren, da wir nur auf den Endschalter warten
   }
   Serial.println("Endschalter erreicht! Horizontale Position genullt.");
 }
 
+/*void fahreBisEndschalter() {
+  Serial.println("Fahre horizontal zum Endschalter (Nullpunkt)...");
+  
+  // Richtung festlegen (Gegen den Uhrzeigersinn / zum Schalter)
+  digitalWrite(DIR_H, LOW); 
+  
+  // WICHTIG: Ein kurzes Delay, damit der Treiber die Richtung verarbeitet
+  delay(10); 
+
+  while(digitalRead(ENDSCHALTER_PIN) == LOW) {
+    // Wir erzeugen den Schritt direkt hier, ohne zusätzliche delay()-Störer
+    digitalWrite(STEP_H, HIGH);
+    delayMicroseconds(600); // Puls-Dauer HIGH (Leicht erhöht für mehr Kraft)
+    digitalWrite(STEP_H, LOW);
+    delayMicroseconds(600); // Puls-Dauer LOW (Bestimmt die Pausenzeit)
+    
+    // Hinweis: 600 µs + 600 µs = 1.2ms pro Schritt. 
+    // Das ist minimal langsamer als dein Scan, wodurch der Motor kraftvoller 
+    // läuft und den Endschalter sanfter anfährt.
+  }
+  
+  Serial.println("Endschalter erreicht! Horizontale Position genullt.");
+}*/
+
+
+void readBestrahlung(){
+  int adc = analogRead(SOLAR_OUT);
+
+  float Uadc = adc * 3.3 / 4095.0;
+
+  float Usolar = Uadc * ((220000.0 + 100000.0) / 100000.0);
+
+  // 47 Ohm parallel zu 320k Ohm
+  float Rges = (47.0 * 320000.0) / (47.0 + 320000.0);
+
+  float I = Usolar / Rges;
+
+  float P = Usolar * I;
+
+  float A = 0.1 * 0.08;
+
+  // Bestrahlungsstärke E
+  float E = P / (A * 0.155);
+
+  Serial.print("Spannung: ");
+  Serial.print(Usolar);
+  Serial.print(" V");
+
+  Serial.print(" | Strom: ");
+  Serial.print(I * 1000);
+  Serial.print(" mA");
+
+  Serial.print(" | Leistung: ");
+  Serial.print(P);
+  Serial.print(" W");
+
+  Serial.print(" | Bestrahlungsstaerke E: ");
+  Serial.print(E);
+  Serial.println(" W/m^2");
+
+}
 // =====================================================
 // SENSOR MITTELN
 // =====================================================
@@ -111,6 +172,29 @@ int readSensor(int pin) {
   long sum = 0;
   for(int i = 0; i < 10; i++) sum += analogRead(pin);
   return sum / 10;
+}
+
+// =====================================================
+// KOMPASS AUSLESEN
+// =====================================================
+void readCompass(){
+  sensors_event_t event; 
+  mag.getEvent(&event);
+
+  float heading = atan2(event.magnetic.y, event.magnetic.x);
+  
+  float declinationAngle = 3.00*M_PI/180; // Beispiel: 3 Grad Deklination, in Bogenmaß umgerechnet
+  heading += declinationAngle;
+  heading += 120.00 * M_PI / 180; // Korrektur für Nordwinkel (120 Grad im Uhrzeigersinn)
+  
+  if(heading < 0) heading += 2*PI;
+  if(heading > 2*PI) heading -= 2*PI;
+   
+  float headingDegrees = heading * 180/M_PI; 
+  
+  Serial.print("Gemessener Kompasswinkel (0° = Norden): ");
+  Serial.print(headingDegrees);
+  Serial.println("°");
 }
 
 // =====================================================
@@ -153,9 +237,12 @@ void sendToThingSpeak(float angleH, float angleV) {
 // =====================================================
 // SCAN FUNKTION
 // =====================================================
+// =====================================================
+// SCAN FUNKTION (KORRIGIERT FÜR NORD-WINKEL)
+// =====================================================
 std::pair<float, float> findBestPosition() {
   
-  // NEU: Motoren stromlos schalten, um magnetische Störungen zu verhindern
+  // Motoren stromlos schalten, um magnetische Störungen zu verhindern
   Serial.println("Schalte Motoren für Kompassmessung stromlos...");
   digitalWrite(EN_H, HIGH);
   digitalWrite(EN_V, HIGH);
@@ -168,9 +255,13 @@ std::pair<float, float> findBestPosition() {
   float heading = atan2(event.magnetic.y, event.magnetic.x) + 3.00; // declinationAngle
   if(heading < 0) heading += 2*PI;
   if(heading > 2*PI) heading -= 2*PI;
-  float headingDegrees = heading * 180/M_PI;  
+  float headingDegrees = heading * 180 / M_PI;  
 
-  // NEU: Motoren wieder aktivieren, da nun die Bewegung startet
+  Serial.print("Gemessener Kompasswinkel (0° = Norden): ");
+  Serial.print(headingDegrees);
+  Serial.println("°");
+
+  // Motoren wieder aktivieren, da nun die Bewegung startet
   digitalWrite(EN_H, LOW);
   digitalWrite(EN_V, LOW);
   delay(10); // Treiber kurz stabilisieren lassen
@@ -182,16 +273,38 @@ std::pair<float, float> findBestPosition() {
 
   for(int i = 0; i < steps_horizontal; i++) {
     makeStepHorizontal();
-    delay(5);
+    //Bremsrampe vor der Richtungsumkehr
+    if (i >= 790) {
+      delay(30); 
+    } 
+    else if (i >= 770) {
+      delay(15); 
+    } 
+    else {
+      delay(5); 
+    }
 
-    int sum = readSensor(OL) + readSensor(OR) + readSensor(UL) + readSensor(UR);
+    // Werte einmalig auslesen, um sie für Summe UND Speicherung zu nutzen
+    int currentOL = readSensor(OL);
+    int currentOR = readSensor(OR);
+    int currentUL = readSensor(UL);
+    int currentUR = readSensor(UR);
+
+
+    int sum = currentOL + currentOR + currentUL + currentUR;
     if(sum > bestSumH) {
-      bestSumH = sum; bestStepH = i;
-      bestOL = readSensor(OL); bestOR = readSensor(OR);
-      bestUL = readSensor(UL); bestUR = readSensor(UR);
+      bestSumH = sum; 
+      bestStepH = i;
+      // Hier werden die exakt besten Werte für ThingSpeak zwischengespeichert
+      bestOL = currentOL; 
+      bestOR = currentOR;
+      bestUL = currentUL; 
+      bestUR = currentUR;
     }
   }
 
+  delay(300); //Pause vor der Rückfahrt, damit der Motor kurz zur Ruhe kommt
+  // Zurück zur besten horizontalen Position fahren
   int stepsBackH = steps_horizontal - bestStepH;
   digitalWrite(DIR_H, LOW);
   for(int i = 0; i < stepsBackH; i++) {
@@ -199,7 +312,13 @@ std::pair<float, float> findBestPosition() {
     delay(5);
   }
 
+  // Hier berechnen wir den finalen horizontalen Winkel in Bezug auf Norden
   float bestAngleHorizontalToNorth = headingDegrees + (bestStepH * 0.45);
+  // Falls der Winkel über 360 Grad springt, korrigieren
+  if(bestAngleHorizontalToNorth >= 360.0) {
+    bestAngleHorizontalToNorth -= 360.0;
+  }
+
   delay(1000);
 
   // --- VERTIKALER SCAN ---
@@ -213,12 +332,14 @@ std::pair<float, float> findBestPosition() {
 
     int sum = readSensor(OL) + readSensor(OR) + readSensor(UL) + readSensor(UR);
     if(sum > bestSumV) {
-      bestSumV = sum; bestStepV = i;
-      bestOL = readSensor(OL); bestOR = readSensor(OR);
-      bestUL = readSensor(UL); bestUR = readSensor(UR);
+      bestSumV = sum; 
+      bestStepV = i;
+      // (Optional) Wenn die vertikalen Sensorwerte wichtiger sind für ThingSpeak,
+      // könntest du bestOL etc. auch hier überschreiben lassen.
     }
   }
 
+  // Zurück zur besten vertikalen Position fahren
   int stepsBackV = steps_vertical - bestStepV;
   digitalWrite(DIR_V, HIGH);
   for(int i = 0; i < stepsBackV; i++) {
@@ -226,12 +347,18 @@ std::pair<float, float> findBestPosition() {
     delay(5);
   }
 
-  return {bestAngleHorizontalToNorth, bestStepV * 0.45};
+  float bestAngleV = bestStepV * 0.45;
+  Serial.print("Bestes horizontales Winkel zum Norden: "); Serial.println(bestAngleHorizontalToNorth);
+  Serial.print("Bestes vertikales Winkel: "); Serial.println(bestAngleV);
+  // HIER WAR DER FEHLER: Wir geben jetzt explizit den Nord-Winkel zurück!
+  return {bestAngleHorizontalToNorth, bestAngleV};
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
 
+  gpio_hold_dis((gpio_num_t)EN_H);
+  gpio_hold_dis((gpio_num_t)EN_V);
   // Pins initialisieren
   pinMode(STEP_H, OUTPUT); pinMode(DIR_H, OUTPUT);
   pinMode(STEP_V, OUTPUT); pinMode(DIR_V, OUTPUT);
@@ -239,8 +366,9 @@ void setup() {
   pinMode(ENDSCHALTER_PIN, INPUT);
 
   // Motortreiber initial aktivieren
-  digitalWrite(EN_H, LOW);
-  digitalWrite(EN_V, LOW);
+  // Serial.println("Aktiviere Motortreiber...");
+  // digitalWrite(EN_H, LOW);
+  // digitalWrite(EN_V, LOW);
 
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
@@ -257,7 +385,11 @@ void setup() {
   }
   
   Serial.println("\n=== SOLAR TRACKER AUFGEWACHT ===");
-  
+  // Testen des Kompasses
+  for (int i = 0; i < 10; i++) {
+    readCompass();
+    delay(1000);
+  }
   // 1. WLAN während der ADC Messung ausschalten
   WiFi.mode(WIFI_OFF);
 
@@ -272,6 +404,8 @@ void setup() {
 
   Serial.print("Bester Horizontaler Winkel: "); Serial.println(finalPositionH);
   Serial.print("Bester Vertikaler Winkel: "); Serial.println(finalPositionV);
+
+  readBestrahlung();
 
   // 4. WLAN einschalten und senden
   connectWiFi();
@@ -294,9 +428,12 @@ void setup() {
   Serial.println("Deaktiviere Motortreiber...");
   digitalWrite(EN_H, HIGH);
   digitalWrite(EN_V, HIGH);
+  gpio_hold_en((gpio_num_t)EN_H);
+  gpio_hold_en((gpio_num_t)EN_V);
+  gpio_deep_sleep_hold_en();
 
   // 7. Ab in den Deep Sleep
-  Serial.println("Alle Aufgaben erledigt. Gehe für 5 Minuten schlafen (Deep Sleep)...");
+  Serial.println("Alle Aufgaben erledigt. Gehe für 1 Minute schlafen (Deep Sleep)...");
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   
   Serial.flush(); 
