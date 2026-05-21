@@ -365,6 +365,147 @@ std::pair<float, float> findBestPosition() {
     delay(5);
   }
 
+  // ========== FEINJUSTIERUNG HORIZONTAL (nach beiden Scans) ==========
+  Serial.println("\nFEINJUSTIERUNG HORIZONTAL");
+  delay(100); // Kurz stabilisieren
+  
+  int fineStepsH = 0;
+  for(int iter = 0; iter < 20; iter++) {
+    // Werte an aktueller Position messen
+    int fineOL = readSensor(OL);
+    int fineOR = readSensor(OR);
+    int fineUL = readSensor(UL);
+    int fineUR = readSensor(UR);
+    
+    // Zwei Differenzen:
+    // 1. Links-Rechts: OL - OR
+    int diffLR = fineOL - fineOR;
+    // 2. Oben-Unten: (OL+OR) - (UL+UR)
+    int diffOU = (fineOL + fineOR) - (fineUL + fineUR);
+    
+    Serial.print("  Iter "); Serial.print(iter);
+    Serial.print(": OL="); Serial.print(fineOL);
+    Serial.print(" OR="); Serial.print(fineOR);
+    Serial.print(" UL="); Serial.print(fineUL);
+    Serial.print(" UR="); Serial.print(fineUR);
+    Serial.print(" | LR-Diff="); Serial.print(diffLR);
+    Serial.print(" OU-Diff="); Serial.println(diffOU);
+    
+    // Wenn beide Differenzen klein genug -> fertig
+    if(abs(diffLR) < 200 && abs(diffOU) < 100) {
+      Serial.println("  -> Beide Differenzen OK, Feinjustierung beendet!");
+      break;
+    }
+    
+    // Fahre basierend auf größerer Differenz
+    if(abs(diffLR) > abs(diffOU)) {
+      // Links-Rechts korrigieren
+      if(diffLR > 0) {
+        digitalWrite(DIR_H, HIGH);
+        Serial.println("  -> Fahre nach RECHTS");
+      } else {
+        digitalWrite(DIR_H, LOW);
+        Serial.println("  -> Fahre nach LINKS");
+      }
+    } else {
+      // Oben-Unten korrigieren (mit Vertikal-Motor!)
+      if(diffOU > 0) {
+        digitalWrite(DIR_V, LOW);
+        Serial.println("  -> Fahre nach OBEN");
+      } else {
+        digitalWrite(DIR_V, HIGH);
+        Serial.println("  -> Fahre nach UNTEN");
+      }
+    }
+    
+    // Kleine Schritte (2 Steps)
+    int fineSteps = 2;
+    if(abs(diffLR) > abs(diffOU)) {
+      for(int i = 0; i < fineSteps; i++) {
+        makeStepHorizontal();
+        delayMicroseconds(800);
+      }
+      fineStepsH += (diffLR > 0) ? fineSteps : -fineSteps;
+    } else {
+      for(int i = 0; i < fineSteps; i++) {
+        makeStepVertical();
+        delayMicroseconds(800);
+      }
+    }
+    
+    delay(150); // Stabilisieren vor nächster Messung
+  }
+  bestStepH += fineStepsH;
+  delay(100); // Kurz stabilisieren
+  
+  int fineStepsV = 0;
+  for(int iter = 0; iter < 20; iter++) {
+    // Werte an aktueller Position messen
+    int fineOL = readSensor(OL);
+    int fineOR = readSensor(OR);
+    int fineUL = readSensor(UL);
+    int fineUR = readSensor(UR);
+    
+    // Zwei Differenzen:
+    // 1. Oben-Unten: (OL+OR) - (UL+UR)
+    int diffOU = (fineOL + fineOR) - (fineUL + fineUR);
+    // 2. Links-Rechts: (OL+UL) - (OR+UR)
+    int diffLR = (fineOL + fineUL) - (fineOR + fineUR);
+    
+    Serial.print("  Iter "); Serial.print(iter);
+    Serial.print(": OL="); Serial.print(fineOL);
+    Serial.print(" OR="); Serial.print(fineOR);
+    Serial.print(" UL="); Serial.print(fineUL);
+    Serial.print(" UR="); Serial.print(fineUR);
+    Serial.print(" | OU-Diff="); Serial.print(diffOU);
+    Serial.print(" LR-Diff="); Serial.println(diffLR);
+    
+    // Wenn beide Differenzen klein genug -> fertig
+    if(abs(diffOU) < 100 && abs(diffLR) < 200) {
+      Serial.println("  -> Beide Differenzen OK, Feinjustierung beendet!");
+      break;
+    }
+    
+    // Fahre basierend auf größerer Differenz
+    if(abs(diffOU) > abs(diffLR)) {
+      // Oben-Unten korrigieren
+      if(diffOU > 0) {
+        digitalWrite(DIR_V, LOW);
+        Serial.println("  -> Fahre nach OBEN");
+      } else {
+        digitalWrite(DIR_V, HIGH);
+        Serial.println("  -> Fahre nach UNTEN");
+      }
+    } else {
+      // Links-Rechts korrigieren (mit Horizontal-Motor!)
+      if(diffLR > 0) {
+        digitalWrite(DIR_H, LOW);
+        Serial.println("  -> Fahre nach RECHTS");
+      } else {
+        digitalWrite(DIR_H, HIGH);
+        Serial.println("  -> Fahre nach LINKS");
+      }
+    }
+    
+    // Kleine Schritte (2 Steps)
+    int fineSteps = 2;
+    if(abs(diffOU) > abs(diffLR)) {
+      for(int i = 0; i < fineSteps; i++) {
+        makeStepVertical();
+        delayMicroseconds(800);
+      }
+      fineStepsV += (diffOU > 0) ? fineSteps : -fineSteps;
+    } else {
+      for(int i = 0; i < fineSteps; i++) {
+        makeStepHorizontal();
+        delayMicroseconds(800);
+      }
+    }
+    
+    delay(150); // Stabilisieren vor nächster Messung
+  }
+  bestStepV += fineStepsV;
+
   Serial.print("Werte Oben Links: "); Serial.println(analogRead(OL));
   Serial.print("Werte Oben Rechts: "); Serial.println(analogRead(OR));
   Serial.print("Werte Unten Links: "); Serial.println(analogRead(UL));
