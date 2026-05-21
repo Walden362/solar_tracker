@@ -3,8 +3,6 @@
 #include <Wire.h>
 #include <Arduino.h>
 #include <utility>
-#include <Adafruit_HMC5883_U.h>
-#include <Adafruit_Sensor.h>
 
 // =====================================================
 // DEEP SLEEP EINSTELLUNGEN
@@ -18,10 +16,7 @@
 const int SOLAR_OUT = 12;
 
 
-// =====================================================
-// HMC5883 MAGNETOMETER
-// =====================================================
-Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
+
 
 // =====================================================
 // WLAN / ThingSpeak
@@ -175,28 +170,7 @@ int readSensor(int pin) {
   return sum / 10;
 }
 
-// =====================================================
-// KOMPASS AUSLESEN
-// =====================================================
-void readCompass(){
-  sensors_event_t event; 
-  mag.getEvent(&event);
 
-  float heading = atan2(event.magnetic.y, event.magnetic.x);
-  
-  float declinationAngle = 3.00*M_PI/180; // Beispiel: 3 Grad Deklination, in Bogenmaß umgerechnet
-  heading += declinationAngle;
-  heading += 120.00 * M_PI / 180; // Korrektur für Nordwinkel (120 Grad im Uhrzeigersinn)
-  
-  if(heading < 0) heading += 2*PI;
-  if(heading > 2*PI) heading -= 2*PI;
-   
-  float headingDegrees = heading * 180/M_PI; 
-  
-  Serial.print("Gemessener Kompasswinkel (0° = Norden): ");
-  Serial.print(headingDegrees);
-  Serial.println("°");
-}
 
 // =====================================================
 // WLAN VERBINDEN
@@ -259,26 +233,10 @@ void sendToThingSpeak(float angleH, float angleV) {
 // =====================================================
 std::pair<float, float> findBestPosition() {
   
-  // Motoren stromlos schalten, um magnetische Störungen zu verhindern
-  Serial.println("Schalte Motoren für Kompassmessung stromlos...");
-  digitalWrite(EN_H, HIGH);
-  digitalWrite(EN_V, HIGH);
-  delay(50); // Kurz warten, bis sich Magnetfelder abgebaut haben
-
-  // Jetzt Kompass störungsfrei auslesen
-  sensors_event_t event; 
-  mag.getEvent(&event);
-
-  float heading = atan2(event.magnetic.y, event.magnetic.x) + 3.00; // declinationAngle
-  if(heading < 0) heading += 2*PI;
-  if(heading > 2*PI) heading -= 2*PI;
-  float headingDegrees = heading * 180 / M_PI;  
-
-  Serial.print("Gemessener Kompasswinkel (0° = Norden): ");
-  Serial.print(headingDegrees);
-  Serial.println("°");
-
-  // Motoren wieder aktivieren, da nun die Bewegung startet
+  // Norden wird durch den Endschalter definiert (0°)
+  Serial.println("Endschalter = Norden (0°)");
+  
+  // Motoren aktivieren
   digitalWrite(EN_H, LOW);
   digitalWrite(EN_V, LOW);
   delay(10); // Treiber kurz stabilisieren lassen
@@ -330,8 +288,8 @@ std::pair<float, float> findBestPosition() {
     delay(5);
   }
 
-  // Hier berechnen wir den finalen horizontalen Winkel in Bezug auf Norden
-  float bestAngleHorizontalToNorth = headingDegrees + (bestStepH * 0.45);
+  // Berechne den finalen horizontalen Winkel ab Norden (Endschalter = 0°)
+  float bestAngleHorizontalToNorth = bestStepH * 0.45;
   // Falls der Winkel über 360 Grad springt, korrigieren
   if(bestAngleHorizontalToNorth >= 360.0) {
     bestAngleHorizontalToNorth -= 360.0;
@@ -540,14 +498,7 @@ void setup() {
 
   delay(1000); 
 
-  // Sensor Check
-  if(!mag.begin()) {
-    Serial.println("Ooops, no HMC5883 detected ... Check your wiring!");
-    digitalWrite(EN_H, HIGH);
-    digitalWrite(EN_V, HIGH);
-    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
-    esp_deep_sleep_start();
-  }
+  // Kompassboard entfernt - Norden wird durch Endschalter definiert
   
   Serial.println("\n=== SOLAR TRACKER AUFGEWACHT ===");
   // Testen des Kompasses
