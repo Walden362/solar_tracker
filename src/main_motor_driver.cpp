@@ -91,6 +91,7 @@ void makeStepVertical() {
   delayMicroseconds(500);
 }
 
+
 // =====================================================
 // REFERENZFAHRT (HOMING)
 // =====================================================
@@ -210,6 +211,22 @@ void connectWiFi() {
   }
   Serial.println("\nWLAN verbunden!");
 }
+
+
+// void readOutDiodes() {
+//   for(int i = 0; i < 10; i++){
+//     int currentOL = readSensor(OL);
+//     int currentOR = readSensor(OR);
+//     int currentUL = readSensor(UL);
+//     int currentUR = readSensor(UR);
+
+//     Serial.print("Aktueller Wert Oben Linnks: "); Serial.println(currentOL);
+//     Serial.print("Aktueller Wert Oben Rechts: "); Serial.println(currentOR);
+//     Serial.print("Aktueller Wert Unten Links: "); Serial.println(currentUL);
+//     Serial.print("Aktueller Wert Unten Rechts: "); Serial.println(currentUR);
+//     delay(1000);
+//   }
+// }
 
 // =====================================================
 // THINGSPEAK SENDEN
@@ -386,10 +403,7 @@ void setup() {
   
   Serial.println("\n=== SOLAR TRACKER AUFGEWACHT ===");
   // Testen des Kompasses
-  for (int i = 0; i < 10; i++) {
-    readCompass();
-    delay(1000);
-  }
+  //readOutDiodes();
   // 1. WLAN während der ADC Messung ausschalten
   WiFi.mode(WIFI_OFF);
 
